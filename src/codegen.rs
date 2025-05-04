@@ -49,27 +49,64 @@ fn generate_expr(mut pairs: Vec<Pair>, key: &Ident) -> TokenStream {
 fn generate_expr_for_arm(mut pairs: Vec<Pair>, key: &Ident, len: usize) -> TokenStream {
     pairs.sort_by_key(|pair| pair.key.clone());
 
+    let uniques_idxs: Vec<usize> = (0..len).filter(|&i| is_unique_at(&pairs, i)).collect();
+
+    let test_idxs: Vec<usize> = (0..len).filter(|&i| !uniques_idxs.contains(&i)).collect();
+
     let pos_idents: Vec<_> = (0..len)
         .map(|i| Ident::new(&format!("i{}", i), Span::call_site()))
         .collect();
+
+    let unique_pos_idents: Vec<_> = uniques_idxs
+        .iter()
+        .map(|&i| pos_idents[i].clone())
+        .collect();
+
+    let test_pos_idents: Vec<_> = test_idxs.iter().map(|&i| pos_idents[i].clone()).collect();
+
     let arr_idents = quote! { [#(#pos_idents),*] };
+    let test_arr_idents = quote! { (#(#test_pos_idents),*) };
 
     let mut arms = Vec::new();
     for &Pair { ref key, value } in &pairs {
-        let arm = quote! { [#(#key),*] => #value, };
+        let unique_key: Vec<_> = uniques_idxs.iter().map(|&i| key[i]).collect();
+
+        let test_key: Vec<_> = test_idxs.iter().map(|&i| key[i]).collect();
+
+        let unique_conds = unique_pos_idents
+            .iter()
+            .zip(unique_key.iter())
+            .map(|(pos, &byte)| {
+                quote! { #pos == #byte }
+            });
+
+        let arm = quote! { (#(#test_key),*) if #(#unique_conds)&&* => # value, };
+
         arms.push(arm);
     }
 
     quote! {
         {
-            let #arr_idents = #key else { unsafe { std::hint::unreachable_unchecked() } };
+            let &#arr_idents = #key else { unsafe { std::hint::unreachable_unchecked() } };
 
-            match #arr_idents {
+            match #test_arr_idents {
                 #(#arms)*
                 _ => return None,
             }
         }
     }
+}
+
+fn is_unique_at(pairs: &[Pair], idx: usize) -> bool {
+    for x in pairs {
+        for y in pairs {
+            if x.key[idx] == y.key[idx] && x.key != y.key {
+                return false;
+            }
+        }
+    }
+
+    true
 }
 
 #[cfg(test)]
