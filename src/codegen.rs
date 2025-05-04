@@ -1,19 +1,20 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
+use syn::Expr;
 use std::collections::BTreeMap;
 
 #[derive(Clone)]
 pub struct Pair {
     pub key: Vec<u8>,
-    pub value: i32,
+    pub value: Expr,
 }
 
-pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident) -> TokenStream {
+pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenStream {
     let key = Ident::new("bytes", Span::call_site());
     let expr = generate_expr(pairs, &key);
 
     quote! {
-        fn #fn_name(#key: &[u8]) -> Option<i32> {
+        fn #fn_name(#key: &[u8]) -> Option<#ty> {
             #expr
         }
     }
@@ -253,7 +254,7 @@ mod tests {
         ];
 
         let key = Ident::new("from_str", Span::call_site());
-        let expr = generate_fn(pairs, &key);
+        let expr = generate_fn(pairs, &key, &syn::parse_str("i32").unwrap());
         println!("{}", expr);
         panic!()
     }

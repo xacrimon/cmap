@@ -2,6 +2,7 @@ use cmap::map;
 
 map! {
     parse,
+    i32,
         b"apple" => 0,
         b"banana" => 1,
         b"carrot" => 2,
