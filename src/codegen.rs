@@ -1,6 +1,6 @@
-use proc_macro2::{Ident, Literal, Span, TokenStream};
-use quote::{ToTokens, quote};
-use std::{collections::BTreeMap, mem};
+use proc_macro2::{Ident, Span, TokenStream};
+use quote::quote;
+use std::collections::BTreeMap;
 
 #[derive(Clone)]
 pub struct Pair {
@@ -53,10 +53,10 @@ fn generate_arm_for_len(mut pairs: Vec<Pair>, key: &Ident, len: usize) -> TokenS
         .map(|i| Ident::new(&format!("_i{}", i), Span::call_site()))
         .collect();
 
-    let unique_cmps = generate_unique_cmps(&pairs, len, &pos_idents);
     let test_idxs: Vec<usize> = (0..len).filter(|&i| !is_unique_at(&pairs, i)).collect();
+    let mut alr_tst = Vec::new();
 
-    let expr = generate_test_branch(&pairs, len, &pos_idents, &test_idxs, &unique_cmps);
+    let expr = generate_test_branch(&pairs, len, &pos_idents, &test_idxs, &mut alr_tst);
 
     quote! {
         {
@@ -74,27 +74,31 @@ fn generate_test_branch(
     len: usize,
     pos_idents: &[Ident],
     rem_test_idxs: &[usize],
-    unique_cmps: &[TokenStream],
+    alr_tst: &mut Vec<usize>,
 ) -> TokenStream {
     assert!(!pairs.is_empty());
 
-    if rem_test_idxs.is_empty() {
-        let v = pairs[0].value;
-        let cmp = unique_cmps[0].clone();
+    if rem_test_idxs.is_empty() || pairs.len() == 1 {
+        let pair = &pairs[0];
+        let value = &pair.value;
+        let uniques_idxs: Vec<usize> = (0..len)
+            .filter(|&i| !alr_tst.contains(&i) && is_unique_at(&pairs, i))
+            .collect();
+        let cmp = generate_unique_cmp(pair, pos_idents, &uniques_idxs);
 
         if pairs.len() == 1 {
             return quote! {
                 if #cmp {
-                    return Some(#v);
+                    return Some(#value);
                 }
             };
         }
 
-        let res = generate_test_branch(&pairs[1..], len, pos_idents, &[], unique_cmps);
+        let res = generate_test_branch(&pairs[1..], len, pos_idents, &[], alr_tst);
 
         return quote! {
             if #cmp {
-                return Some(#v);
+                return Some(#value);
             }
 
             #res
@@ -115,11 +119,13 @@ fn generate_test_branch(
         (*b, *freq)
     };
 
-    let (idx, (b, f)) = rem_test_idxs
+    let (idx, (b, _freq)) = rem_test_idxs
         .iter()
         .map(|&idx| (idx, freq_of_test_at(idx)))
         .max_by_key(|&(_, (_, f))| f)
         .expect("no best idx found");
+
+    alr_tst.push(idx);
 
     let test_ident = &pos_idents[idx];
     let next_rem = rem_test_idxs
@@ -140,12 +146,20 @@ fn generate_test_branch(
         .cloned()
         .collect();
 
-    let pos_br = || generate_test_branch(&next_pairs_pos, len, pos_idents, &next_rem, unique_cmps);
+    macro_rules! pos_br {
+        () => {
+            generate_test_branch(&next_pairs_pos, len, pos_idents, &next_rem, alr_tst)
+        };
+    }
 
-    let neg_br = || generate_test_branch(&next_pairs_neg, len, pos_idents, &next_rem, unique_cmps);
+    macro_rules! neg_br {
+        () => {
+            generate_test_branch(&next_pairs_neg, len, pos_idents, &next_rem, alr_tst)
+        };
+    }
 
     if next_pairs_pos.is_empty() {
-        let neg_br = neg_br();
+        let neg_br = neg_br!();
 
         return quote! {
             if #test_ident != #b {
@@ -155,7 +169,7 @@ fn generate_test_branch(
     }
 
     if next_pairs_neg.is_empty() {
-        let pos_br = pos_br();
+        let pos_br = pos_br!();
 
         return quote! {
             if #test_ident == #b {
@@ -166,8 +180,8 @@ fn generate_test_branch(
 
     assert!(!(next_pairs_neg.is_empty() || next_pairs_pos.is_empty()));
 
-    let pos_br = pos_br();
-    let neg_br = neg_br();
+    let pos_br = pos_br!();
+    let neg_br = neg_br!();
     quote! {
         if #test_ident == #b {
             #pos_br
@@ -177,25 +191,7 @@ fn generate_test_branch(
     }
 }
 
-fn generate_unique_cmps(pairs: &[Pair], len: usize, pos_idents: &[Ident]) -> Vec<TokenStream> {
-    let uniques_idxs: Vec<usize> = (0..len).filter(|&i| is_unique_at(&pairs, i)).collect();
-    let mut unique_cmps = Vec::new();
-
-    for pair in pairs {
-        let cmp = generate_unique_cmp(pair, len, pos_idents, &uniques_idxs);
-
-        unique_cmps.push(cmp);
-    }
-
-    unique_cmps
-}
-
-fn generate_unique_cmp(
-    pair: &Pair,
-    len: usize,
-    pos_idents: &[Ident],
-    unique_idxs: &[usize],
-) -> TokenStream {
+fn generate_unique_cmp(pair: &Pair, pos_idents: &[Ident], unique_idxs: &[usize]) -> TokenStream {
     let mut idxs = unique_idxs.to_vec();
     idxs.sort();
 

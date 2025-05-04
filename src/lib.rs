@@ -1,11 +1,9 @@
 mod codegen;
 
 use proc_macro::TokenStream;
-use quote::{quote, quote_spanned};
 use syn::parse::{Parse, ParseStream, Result};
-use syn::punctuated::{Pair, Punctuated};
-use syn::spanned::Spanned;
-use syn::{Expr, Ident, Lit, LitByteStr, LitInt, Token, Type, Visibility, parse_macro_input};
+use syn::punctuated::Punctuated;
+use syn::{Ident, LitByteStr, LitInt, Token, parse_macro_input};
 
 struct Map {
     fn_name: Ident,
@@ -41,7 +39,7 @@ impl Parse for Case {
 pub fn map(input: TokenStream) -> TokenStream {
     let Map { fn_name, pairs } = parse_macro_input!(input as Map);
 
-    let mut pairs = pairs
+    let pairs = pairs
         .into_iter()
         .map(|Case { key, value }| {
             let key = key.value();
