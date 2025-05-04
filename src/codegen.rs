@@ -1,6 +1,6 @@
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::{ToTokens, quote};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, mem};
 
 #[derive(Clone)]
 pub struct Pair {
@@ -50,7 +50,7 @@ fn generate_arm_for_len(mut pairs: Vec<Pair>, key: &Ident, len: usize) -> TokenS
     pairs.sort_by_key(|pair| pair.key.clone());
 
     let pos_idents: Vec<_> = (0..len)
-        .map(|i| Ident::new(&format!("i{}", i), Span::call_site()))
+        .map(|i| Ident::new(&format!("_i{}", i), Span::call_site()))
         .collect();
 
     let unique_cmps = generate_unique_cmps(&pairs, len, &pos_idents);
@@ -179,28 +179,49 @@ fn generate_test_branch(
 
 fn generate_unique_cmps(pairs: &[Pair], len: usize, pos_idents: &[Ident]) -> Vec<TokenStream> {
     let uniques_idxs: Vec<usize> = (0..len).filter(|&i| is_unique_at(&pairs, i)).collect();
-    let unique_pos_idents: Vec<_> = uniques_idxs
-        .iter()
-        .map(|&i| pos_idents[i].clone())
-        .collect();
-
-    let mut cmps = Vec::new();
+    let mut unique_cmps = Vec::new();
 
     for pair in pairs {
-        let unique_key: Vec<_> = uniques_idxs.iter().map(|&i| pair.key[i]).collect();
+        let cmp = generate_unique_cmp(pair, len, pos_idents, &uniques_idxs);
 
-        let unique_conds = unique_pos_idents
-            .iter()
-            .zip(unique_key.iter())
-            .map(|(pos, &byte)| {
-                quote! { #pos == #byte }
-            });
-
-        let cmp = quote! {#(#unique_conds)&&*};
-        cmps.push(cmp);
+        unique_cmps.push(cmp);
     }
 
-    cmps
+    unique_cmps
+}
+
+fn generate_unique_cmp(
+    pair: &Pair,
+    len: usize,
+    pos_idents: &[Ident],
+    unique_idxs: &[usize],
+) -> TokenStream {
+    let mut idxs = unique_idxs.to_vec();
+    idxs.sort();
+
+    let mut conds = Vec::new();
+
+    for contig in idxs.chunk_by(|i0, i1| i1 - i0 == 1) {
+        if contig.len() == 1 {
+            let idx = contig[0];
+            let pos = &pos_idents[idx];
+            let byte = pair.key[idx];
+            let cmp = quote! { #pos == #byte };
+            conds.push(cmp);
+            continue;
+        }
+
+        let lo = contig[0];
+        let hi = contig[contig.len() - 1];
+
+        let lits = &pair.key[lo..=hi];
+        let lit_subsl = quote! { &[#(#lits),*] };
+        let test_subsl = quote! { unsafe { bytes.get_unchecked(#lo..=#hi) } };
+        let cmp = quote! { #lit_subsl == #test_subsl };
+        conds.push(cmp);
+    }
+
+    quote! {#(#conds)&&*}
 }
 
 fn is_unique_at(pairs: &[Pair], idx: usize) -> bool {
