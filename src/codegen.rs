@@ -13,7 +13,6 @@ pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident) -> TokenStream {
     let expr = generate_expr(pairs, &key);
 
     quote! {
-        #[inline(never)]
         fn #fn_name(#key: &[u8]) -> Option<i32> {
             #expr
         }
