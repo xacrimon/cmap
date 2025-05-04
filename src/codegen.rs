@@ -64,9 +64,13 @@ pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenSt
                 _field: std::marker::PhantomData<Field>,
             }
 
+            impl Counter<U0> for CounterImpl<U0> {
+                type Next = CounterImpl<U0>;
+            }
+
             impl<Field> Counter<Field> for CounterImpl<Field>
             where
-                Field: Unsigned + Sub<U1> + NonZero,
+                Field: Unsigned + Sub<U1>,
                 <Field as Sub<U1>>::Output: Unsigned + Sub<U1>,
                 CounterImpl<<Field as Sub<U1>>::Output>: Counter<Field>,
 
