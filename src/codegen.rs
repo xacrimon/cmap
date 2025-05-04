@@ -60,50 +60,59 @@ pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenSt
                 type Counter = CounterImpl<U<N>>;
             }
 
+            #[inline(always)]
             const fn cmp_wrapper<const N:usize, const R:usize>(a: &[u8], b: &[u8]) -> bool
                 where FieldMap<N>: AsCounter
             {
-                cmp::<<FieldMap<N> as AsCounter>::Counter, N, R>(a, b)
+                cmp::<<FieldMap<N> as AsCounter>::Counter, N, R>(a.as_ptr(), b.as_ptr())
             }
 
-            const fn cmp<C, const END: usize, const R:usize>(a: &[u8], b: &[u8]) -> bool
+            #[inline(always)]
+            const fn cmp<C, const END: usize, const R:usize>(a: *const u8, b: *const u8) -> bool
             where
                 C: Counter,
             {
-                const fn adv(a: &[u8]) -> &[u8] {
-                    let a = unsafe { std::slice::from_raw_parts(a.as_ptr().add(8), a.len() - 8) };
-                    a
+                #[inline(always)]
+                const fn adv(x: *const u8) -> *const u8 {
+                    unsafe { x.add(8) }
+                }
+
+                macro_rules! load {
+                    (u64, $ptr:expr) => {
+                        unsafe { std::ptr::read_unaligned($ptr as *const u64) }
+                    };
+                    (u32, $ptr:expr) => {
+                        unsafe { std::ptr::read_unaligned($ptr as *const u32) }
+                    };
+                    (u16, $ptr:expr) => {
+                        unsafe { std::ptr::read_unaligned($ptr as *const u16) }
+                    };
+                    (u8, $ptr:expr) => {
+                        unsafe { std::ptr::read_unaligned($ptr as *const u8) }
+                    };
                 }
 
                 if const { C::COUNT > 0 } {
-                    unsafe {
-                        let b0 = u64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == u64::from_ne_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
-                        let b1 = cmp::<C::Next, END, R>(adv(a),adv(b));
-                        return b0 && b1;
-                    }
-                }
-
-                if const { R == 0 } {
+                    let b0 = load!(u64, a) == load!(u64, b);
+                    let b1 = cmp::<C::Next, END, R>(adv(a),adv(b));
+                    b0 && b1
+                } else if const { R == 0 } {
                     true
                 } else if const { R == 1 } {
-                    a[0] == b[0]
+                    load!(u8, a) == load!(u8, b)
                 } else if const { R == 2 } {
-                    u16::from_ne_bytes([a[0], a[1]]) == u16::from_ne_bytes([b[0], b[1]])
+                    load!(u16, a) == load!(u16, b)
                 } else if const { R == 3 } {
-                    u16::from_ne_bytes([a[0], a[1]]) == u16::from_ne_bytes([b[0], b[1]])
-                        && a[2] == b[2]
+                    load!(u16, a) == load!(u16, b) && load!(u8, a.add(2)) == load!(u8, b.add(2))
                 } else if const { R == 4 } {
-                    u32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
+                    load!(u32, a) == load!(u32, b)
                 } else if const { R == 5 } {
-                    u32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
-                        && a[4] == b[4]
+                    load!(u32, a) == load!(u32, b) && load!(u8, a.add(4)) == load!(u8, b.add(4))
                 } else if const { R == 6 } {
-                    u32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
-                        && u16::from_ne_bytes([a[4], a[5]]) == u16::from_ne_bytes([b[4], b[5]])
+                    load!(u32, a) == load!(u32, b) && load!(u16, a.add(4)) == load!(u16, b.add(4))
                 } else if const { R == 7 } {
-                    u32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
-                        && u16::from_ne_bytes([a[4], a[5]]) == u16::from_ne_bytes([b[4], b[5]])
-                        && a[6] == b[6]
+                    load!(u32, a) == load!(u32, b) && load!(u16, a.add(4)) == load!(u16, b.add(4))
+                        && load!(u8, a.add(6)) == load!(u8, b.add(6))
                 } else {
                     unsafe { std::hint::unreachable_unchecked(); }
                 }
