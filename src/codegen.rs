@@ -16,7 +16,7 @@ pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenSt
     quote! {
         const fn #fn_name(#key: &[u8]) -> Option<#ty> {
             use typenum::*;
-            use std::ops::{Shl,Sub,Add,Shr,Mul};
+            use std::ops::{Sub,Add,Shr,Mul};
             use typenum::uint::*;
 
             trait Counter {
@@ -53,18 +53,20 @@ pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenSt
             impl<const N: usize> AsCounter for FieldMap<N>
             where
                 Const<N> : ToUInt,
-                //<Const<N> as ToUInt>::Output: Unsigned
+                <Const<N> as ToUInt>::Output: Unsigned,
+                CounterImpl<U<N>>: Counter,
             {
-                type Counter = CounterImpl<U7>;
+
+                type Counter = CounterImpl<U<N>>;
             }
 
-            const fn cmp_wrapper<const N:usize>(a: &[u8], b: &[u8]) -> bool
+            const fn cmp_wrapper<const N:usize, const R:usize>(a: &[u8], b: &[u8]) -> bool
                 where FieldMap<N>: AsCounter
             {
-                cmp::<<FieldMap<N> as AsCounter>::Counter, N>(a, b)
+                cmp::<<FieldMap<N> as AsCounter>::Counter, N, R>(a, b)
             }
 
-            const fn cmp<C, const END: usize>(a: &[u8], b: &[u8]) -> bool
+            const fn cmp<C, const END: usize, const R:usize>(a: &[u8], b: &[u8]) -> bool
             where
                 C: Counter,
             {
@@ -73,75 +75,37 @@ pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenSt
                     a
                 }
 
-                let a = unsafe { a.first_chunk::<8>().unwrap_unchecked() };
-                let b = unsafe { b.first_chunk::<8>().unwrap_unchecked() };
-
-                let mut i = 0;
-                while i < END {
-                    if a[i] != b[i] {
-                        return false;
+                if const { C::COUNT > 0 } {
+                    unsafe {
+                        let b0 = u64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == u64::from_ne_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
+                        let b1 = cmp::<C::Next, END, R>(adv(a),adv(b));
+                        return b0 && b1;
                     }
-                    i += 1;
-                }
-                true
-
-                //if const { C::COUNT == 0} {
-                //    let b0 = u64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == u64::from_ne_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
-                //    let b1 = cmp::<C::Next, END>(adv(a), adv(b));
-                //}
-
-                //if const { <<N as STEPPED>::CONTINUE as Bit>::BOOL } {
-                //    let a = unsafe { a.first_chunk::<8>().unwrap_unchecked() };
-                //    let b = unsafe { b.first_chunk::<8>().unwrap_unchecked() };
-                //    let b0 = u64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == u64::from_ne_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
-                //    return b0 && cmp::<N::CHILD>(adv(a), adv(b));
-                //}
-
-                //false
-            }
-
-            #[inline(always)]
-            const fn bs_eq<const N:usize>(a: &[u8], b: &[u8]) -> bool where Const<N>: ToUInt {
-                let a = unsafe { a.first_chunk::<N>().unwrap_unchecked() };
-                let b = unsafe { b.first_chunk::<N>().unwrap_unchecked() };
-
-                const fn adv(a: &[u8]) -> &[u8] {
-                    let a = unsafe { std::slice::from_raw_parts(a.as_ptr().add(8), a.len() - 8) };
-                    a
                 }
 
-                if const { N == 0 } {
+                if const { R == 0 } {
                     true
-                } else if const { N == 1 } {
+                } else if const { R == 1 } {
                     a[0] == b[0]
-                } else if const { N == 2 } {
+                } else if const { R == 2 } {
                     u16::from_ne_bytes([a[0], a[1]]) == u16::from_ne_bytes([b[0], b[1]])
-                } else if const { N == 3 } {
+                } else if const { R == 3 } {
                     u16::from_ne_bytes([a[0], a[1]]) == u16::from_ne_bytes([b[0], b[1]])
                         && a[2] == b[2]
-                } else if const { N == 4 } {
+                } else if const { R == 4 } {
                     u32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
-                } else if const { N == 5 } {
+                } else if const { R == 5 } {
                     u32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
                         && a[4] == b[4]
-                } else if const { N == 6 } {
+                } else if const { R == 6 } {
                     u32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
                         && u16::from_ne_bytes([a[4], a[5]]) == u16::from_ne_bytes([b[4], b[5]])
-                } else if const { N == 7 } {
+                } else if const { R == 7 } {
                     u32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
                         && u16::from_ne_bytes([a[4], a[5]]) == u16::from_ne_bytes([b[4], b[5]])
                         && a[6] == b[6]
-                } else if const { N == 8 } {
-                    u64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == u64::from_ne_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
                 } else {
-                    let mut i = 0;
-                    while i < N {
-                        if a[i] != b[i] {
-                            return false;
-                        }
-                        i += 1;
-                    }
-                    true
+                    unsafe { std::hint::unreachable_unchecked(); }
                 }
             }
 
@@ -344,10 +308,13 @@ fn generate_unique_cmp(pair: &Pair, pos_idents: &[Ident], unique_idxs: &[usize])
         let lit_subsl = quote! { &[#(#lits),*] };
 
         let cmp_len = hi - lo + 1;
+        let steps = cmp_len / 8;
+        let n = 2usize.pow(steps as u32) - 1;
+        let rem = cmp_len % 8;
 
         let test_subsl =
             quote! { unsafe { std::slice::from_raw_parts(bytes.as_ptr().add(#lo), #cmp_len) } };
-        let cmp = quote! { bs_eq::<#cmp_len>(#test_subsl, #lit_subsl) };
+        let cmp = quote! { cmp_wrapper::<#n, #rem>(#test_subsl, #lit_subsl) };
         conds.push(cmp);
     }
 
