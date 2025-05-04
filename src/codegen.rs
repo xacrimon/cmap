@@ -1,51 +1,13 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
-use syn::Expr;
 use std::collections::BTreeMap;
+use syn::Expr;
 
 #[derive(Clone)]
 pub struct Pair {
     pub key: Vec<u8>,
     pub value: Expr,
 }
-
-use typenum::*;
-use std::ops::{Shl,Sub,Add};
-
-trait Counter<Field> where Field:Unsigned {
-    type Next: Counter<Field>;
-}
-
-struct CounterImpl<Field> where Field:Unsigned {
-    _field: std::marker::PhantomData<Field>,
-}
-
-//impl Counter<U0> for CounterImpl<U0>
-//
-//{
-//    type Next = CounterImpl<U0>;
-//}
-
-impl<Field> Counter<Field> for CounterImpl<Field>
-where
-    Field: Unsigned + Sub<U1> + NonZero,
-    <Field as Sub<U1>>::Output: Unsigned + Sub<U1>,
-    CounterImpl<<Field as Sub<U1>>::Output>: Counter<Field>,
-    //<Field as Shl<U1>::Output>: Unsigned + Shl<U1>,
-    //<<Field as Shl<U1>::Output> as Shl<U1>>::Output: Unsigned + Shl<U1>,
-
-{
-    type Next = CounterImpl<<Field as Sub<U1>>::Output>;
-}
-
-//impl<Field> Counter<Field> for CounterImpl<Field>
-//where
-//    Field: Unsigned + Shl<U1>,
-//    <Field as Shl<U1>>::Output: Unsigned + Shl<U1>,
-//    CounterImpl<<Field as Shl<U1>>::Output>: Counter<Field>,
-//{
-//    type Next = CounterImpl<<Field as Shl<U1>>::Output>;
-//}
 
 pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenStream {
     let key = Ident::new("bytes", Span::call_site());
@@ -54,38 +16,57 @@ pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenSt
     quote! {
         const fn #fn_name(#key: &[u8]) -> Option<#ty> {
             use typenum::*;
-            use std::ops::{Shl,Sub,Add};
+            use std::ops::{Shl,Sub,Add,Shr,Mul};
+            use typenum::uint::*;
 
-            trait Counter<Field> where Field:Unsigned {
-                type Next: Counter<Field>;
+            trait Counter {
+                type Next: Counter;
+                const COUNT: usize;
             }
-            
+
             struct CounterImpl<Field> where Field:Unsigned {
                 _field: std::marker::PhantomData<Field>,
             }
 
-            impl Counter<U0> for CounterImpl<U0> {
+            impl Counter for CounterImpl<U0> {
                 type Next = CounterImpl<U0>;
+                const COUNT: usize = 0;
             }
 
-            impl<Field> Counter<Field> for CounterImpl<Field>
+            impl<Field> Counter for CounterImpl<UInt<Field, B1>>
             where
-                Field: Unsigned + Sub<U1>,
-                <Field as Sub<U1>>::Output: Unsigned + Sub<U1>,
-                CounterImpl<<Field as Sub<U1>>::Output>: Counter<Field>,
+                UInt<Field, B1>: Unsigned + Shr<U1>,
+                <UInt<Field, B1> as Shr<U1>>::Output: Unsigned + Shr<U1>,
+                CounterImpl<<UInt<Field, B1> as Shr<U1>>::Output>: Counter,
 
             {
-                type Next = CounterImpl<<Field as Sub<U1>>::Output>;
+                type Next = CounterImpl<<UInt<Field, B1> as Shr<U1>>::Output>;
+                const COUNT: usize = const { <UInt<Field, B1> as Unsigned>::USIZE.count_ones() as usize };
             }
 
-            const fn cmp_wrapper<const N:usize>(a: &[u8], b: &[u8]) -> bool {
-                cmp::<CounterImpl<U0>, U0, N>(a, b)
+            trait AsCounter {
+                type Counter: Counter;
             }
 
-            const fn cmp<C, F, const END: usize>(a: &[u8], b: &[u8]) -> bool
+            struct FieldMap<const N: usize>(std::marker::PhantomData<[(); N]>);
+
+            impl<const N: usize> AsCounter for FieldMap<N>
             where
-                C: Counter<F>,
-                F: Unsigned,
+                Const<N> : ToUInt,
+                //<Const<N> as ToUInt>::Output: Unsigned
+            {
+                type Counter = CounterImpl<U7>;
+            }
+
+            const fn cmp_wrapper<const N:usize>(a: &[u8], b: &[u8]) -> bool
+                where FieldMap<N>: AsCounter
+            {
+                cmp::<<FieldMap<N> as AsCounter>::Counter, N>(a, b)
+            }
+
+            const fn cmp<C, const END: usize>(a: &[u8], b: &[u8]) -> bool
+            where
+                C: Counter,
             {
                 const fn adv(a: &[u8]) -> &[u8] {
                     let a = unsafe { std::slice::from_raw_parts(a.as_ptr().add(8), a.len() - 8) };
@@ -95,10 +76,19 @@ pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenSt
                 let a = unsafe { a.first_chunk::<8>().unwrap_unchecked() };
                 let b = unsafe { b.first_chunk::<8>().unwrap_unchecked() };
 
-                if const { F::USIZE == 0} {
-                    let b0 = u64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == u64::from_ne_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
-                    //let b1 = cmp::<C::Next, _, END>(adv(a), adv(b));
+                let mut i = 0;
+                while i < END {
+                    if a[i] != b[i] {
+                        return false;
+                    }
+                    i += 1;
                 }
+                true
+
+                //if const { C::COUNT == 0} {
+                //    let b0 = u64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == u64::from_ne_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
+                //    let b1 = cmp::<C::Next, END>(adv(a), adv(b));
+                //}
 
                 //if const { <<N as STEPPED>::CONTINUE as Bit>::BOOL } {
                 //    let a = unsafe { a.first_chunk::<8>().unwrap_unchecked() };
@@ -107,7 +97,7 @@ pub fn generate_fn(pairs: Vec<Pair>, fn_name: &Ident, ty: &syn::Type) -> TokenSt
                 //    return b0 && cmp::<N::CHILD>(adv(a), adv(b));
                 //}
 
-                false
+                //false
             }
 
             #[inline(always)]
@@ -353,9 +343,10 @@ fn generate_unique_cmp(pair: &Pair, pos_idents: &[Ident], unique_idxs: &[usize])
         let lits = &pair.key[lo..=hi];
         let lit_subsl = quote! { &[#(#lits),*] };
 
-        let cmp_len = hi-lo+1;
+        let cmp_len = hi - lo + 1;
 
-        let test_subsl = quote! { unsafe { std::slice::from_raw_parts(bytes.as_ptr().add(#lo), #cmp_len) } };
+        let test_subsl =
+            quote! { unsafe { std::slice::from_raw_parts(bytes.as_ptr().add(#lo), #cmp_len) } };
         let cmp = quote! { bs_eq::<#cmp_len>(#test_subsl, #lit_subsl) };
         conds.push(cmp);
     }
